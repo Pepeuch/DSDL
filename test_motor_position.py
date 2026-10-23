@@ -1,99 +1,83 @@
 #!/usr/bin/env python3
-"""Round-trip tests for uavcan.equipment.esc.MotorPosition (draft DTID 1037).
+"""DroneCAN MotorPosition v2: DSDL and multi-frame transport round-trip.
 
-Run from the DSDL repository root: python3 test_motor_position.py
-Requires: pip install dronecan
-This test uses the DSDL definitions in the current checkout, not packaged ones.
+Run from the DSDL repository root with `dronecan` installed:
+    python3 test_motor_position.py
+    python3 test_motor_position_continuity.py
 """
 import os
-
 import dronecan
 
-ROOTS = [name for name in ('uavcan', 'com', 'ardupilot', 'dronecan')
-         if os.path.isdir(name)]
+ROOTS = [n for n in ('uavcan', 'com', 'ardupilot', 'dronecan') if os.path.isdir(n)]
 assert 'uavcan' in ROOTS, 'Run from the DSDL repository root'
 dronecan.load_dsdl(*ROOTS, exclude_dist=True)
 
 Msg = dronecan.TYPENAMES['uavcan.equipment.esc.MotorPosition']
 assert Msg.default_dtid == 1037
-assert Msg.get_data_type_signature() == 0xB398385AA21637A6
-assert Msg.get_min_bitlen() == 40
-assert Msg.get_max_bitlen() == 56
+assert Msg.get_min_bitlen() == 79
+assert Msg.get_max_bitlen() == 95
 
 
-def roundtrip(message, expected_frame_size):
-    outgoing = dronecan.transport.Transfer(
+def roundtrip(message, lengths):
+    transfer = dronecan.transport.Transfer(
         payload=message, source_node_id=42, transfer_id=3)
-    frames = outgoing.to_frames()
-    assert len(frames) == 1, 'Unexpected multi-frame transfer'
-    frame = frames[0]
-    assert len(frame.bytes) == expected_frame_size, frame.bytes
-    assert len(frame.bytes) <= 8
-    assert frame.start_of_transfer and frame.end_of_transfer
-    assert (frame.message_id >> 8) & 0xFFFF == 1037
-
+    frames = transfer.to_frames()
+    actual = [len(f.bytes) for f in frames]
+    assert actual == lengths, f'frame lengths {actual}, wanted {lengths}'
+    assert len(frames) == 2
+    assert all(len(f.bytes) <= 8 for f in frames)
+    assert frames[0].start_of_transfer and not frames[0].end_of_transfer
+    assert not frames[-1].start_of_transfer and frames[-1].end_of_transfer
+    assert all(((f.message_id >> 8) & 0xFFFF) == 1037 for f in frames)
     incoming = dronecan.transport.Transfer()
     incoming.from_frames(frames)
-    assert incoming.data_type_signature == 0xB398385AA21637A6
+    assert incoming.data_type_signature == Msg.get_data_type_signature()
     return incoming.payload
 
-
 checks = 0
-
-# Tick representation: exact signed counts, including boundaries and reverse.
 for count in (0, 1, -1, 123456, -123456, 2**31 - 1, -(2**31)):
-    message = Msg()
-    message.esc_index = 3
-    message.valid = True
-    message.origin_toggle = False
-    message.position.ticks.ticks = count
-    message.position.ticks.ticks_per_revolution = 42
-
-    received = roundtrip(message, 8)  # 7-byte payload + 1-byte tail
-    assert dronecan.get_active_union_field(received.position) == 'ticks'
-    assert received.esc_index == 3
-    assert received.valid is True
-    assert received.origin_toggle is False
-    assert received.position.ticks.ticks == count
-    assert received.position.ticks.ticks_per_revolution == 42
+    msg = Msg()
+    msg.esc_index = 3
+    msg.valid = True
+    msg.origin_id = 0xA1B2C3D4
+    msg.sample_seq = 254
+    msg.position.ticks.ticks = count
+    msg.position.ticks.ticks_per_revolution = 42
+    rx = roundtrip(msg, [8, 8])
+    assert rx.esc_index == 3 and rx.valid is True
+    assert rx.origin_id == 0xA1B2C3D4 and rx.sample_seq == 254
+    assert dronecan.get_active_union_field(rx.position) == 'ticks'
+    assert rx.position.ticks.ticks == count
+    assert rx.position.ticks.ticks_per_revolution == 42
     checks += 1
 
-# Float representation: use exactly representable float32 values.
-for revolutions in (0.0, 1.125, -12.5, 125000.0):
-    message = Msg()
-    message.esc_index = 31
-    message.valid = True
-    message.origin_toggle = True
-    message.position.revolutions = revolutions
-
-    received = roundtrip(message, 6)  # 5-byte payload + 1-byte tail
-    assert dronecan.get_active_union_field(received.position) == 'revolutions'
-    assert received.esc_index == 31
-    assert received.valid is True
-    assert received.origin_toggle is True
-    assert received.position.revolutions == revolutions
+for rev in (0.0, 1.125, -12.5, 125000.0):
+    msg = Msg()
+    msg.esc_index = 31
+    msg.valid = True
+    msg.origin_id = 0xFFFFFFFF
+    msg.sample_seq = 255
+    msg.position.revolutions = rev
+    rx = roundtrip(msg, [8, 6])
+    assert rx.esc_index == 31 and rx.valid is True
+    assert rx.origin_id == 0xFFFFFFFF and rx.sample_seq == 255
+    assert dronecan.get_active_union_field(rx.position) == 'revolutions'
+    assert rx.position.revolutions == rev
     checks += 1
 
-# Invalid telemetry must retain its invalid flag after transport.
-message = Msg()
-message.esc_index = 0
-message.valid = False
-message.origin_toggle = True
-message.position.ticks.ticks = -42
-message.position.ticks.ticks_per_revolution = 84
-received = roundtrip(message, 8)
-assert received.valid is False and received.origin_toggle is True
+msg = Msg()
+msg.esc_index = 0
+msg.valid = False
+msg.origin_id = 500
+msg.sample_seq = 0
+msg.position.ticks.ticks = -42
+msg.position.ticks.ticks_per_revolution = 84
+rx = roundtrip(msg, [8, 8])
+assert rx.valid is False and rx.origin_id == 500 and rx.sample_seq == 0
 checks += 1
 
-# Reference receiver arithmetic for wraparound (not a timing/continuity test).
-def signed_wrap_delta(current, previous):
-    return (current - previous + 2**31) % (2**32) - 2**31
-
-assert signed_wrap_delta(-(2**31), 2**31 - 1) == 1
-assert signed_wrap_delta(2**31 - 1, -(2**31)) == -1
-checks += 2
-
-print(f'OK: {checks} MotorPosition serialization and arithmetic checks')
+print(f'OK: {checks} DSDL multi-frame serialization checks')
 print('DTID:', Msg.default_dtid)
-print(f'Signature: 0x{Msg.get_data_type_signature():016X}')
-print('Tick mode: 8-byte CAN frame | Float mode: 6-byte CAN frame')
+print(f'NEW signature: 0x{Msg.get_data_type_signature():016X}')
+print('Tick: 12-byte payload / 2 CAN frames (8 + 8 bytes incl. tails)')
+print('Float: 10-byte payload / 2 CAN frames (8 + 6 bytes incl. tails)')
