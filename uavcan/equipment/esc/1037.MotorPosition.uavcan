@@ -1,0 +1,31 @@
+# Cumulative mechanical motor-shaft position for ESC telemetry and odometry.
+#
+# This is an optional complement to Status and StatusExtended; it does not
+# replace either existing message. The source may use Hall sensors, encoders,
+# or sensorless position estimation, but shall indicate invalid measurements.
+#
+# A positive increment denotes forward rotation according to RPMCommand.
+# esc_index follows Status/StatusExtended indexing (zero is the first ESC).
+#
+# valid is false when position continuity/measurement is unavailable. Receivers
+# must not integrate a transition across invalid data without re-establishing
+# a position origin and verifying a plausible increment.
+#
+# origin_toggle changes state whenever the position counter is re-zeroed or
+# its origin or scaling changes. It is a persistent parity bit, not a pulse.
+# Receivers must re-baseline when it changes, and also when a node restarts,
+# whenever a gap prevents continuity from being established, or when the
+# reported delta is physically implausible. Two or more origin changes between
+# observed samples cannot be identified reliably using one bit alone.
+#
+# In integer mode, ticks_per_revolution must be greater than zero; position
+# ticks wrap modulo 2^32. In float mode, revolutions is a finite signed value.
+# Neither representation implies a wheel transmission ratio or a wheel size.
+#
+# Frame size: tick mode 56 bits (7 bytes), float mode 40 bits (5 bytes).
+# DTID 1037 is provisional until accepted by the DroneCAN maintainers.
+
+uint5 esc_index
+bool valid
+bool origin_toggle
+MotorPositionValue position

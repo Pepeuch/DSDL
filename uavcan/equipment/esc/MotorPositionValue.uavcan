@@ -1,0 +1,14 @@
+# One of two representations of cumulative mechanical motor-shaft position.
+#
+# Tick mode preserves integer counter increments from Hall sensors, encoders,
+# and ESC tachometers. Floating-point mode is for sources natively reporting
+# mechanical revolutions. Do not convert an exact counter into float32 when
+# tick mode is available, because float32 loses fractional resolution at large
+# cumulative positions.
+#
+# The union tag is one bit: 0 = ticks, 1 = revolutions.
+
+@union
+
+MotorPositionTicks ticks
+float32 revolutions

@@ -1,0 +1,15 @@
+# Cumulative motor-shaft position as an exact signed tick count.
+#
+# A positive increment denotes forward rotation, following the convention of
+# uavcan.equipment.esc.RPMCommand. A negative increment denotes reverse rotation.
+#
+# ticks_per_revolution is the number of counter ticks per mechanical revolution
+# of the motor shaft, not per electrical revolution and not per wheel revolution.
+# It must be greater than zero and remain constant until the position origin
+# changes. Receivers convert ticks to revolutions by division.
+#
+# The signed 32-bit counter wraps modulo 2^32. Receivers must unwrap increments
+# only when continuity is established; gaps or implausible deltas must be rejected.
+
+int32 ticks
+uint16 ticks_per_revolution
